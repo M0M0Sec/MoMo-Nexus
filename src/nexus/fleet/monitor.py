@@ -306,9 +306,14 @@ class HealthMonitor:
 
                 # Mark offline
                 if time_since > self._heartbeat_timeout:
+                    # Count EVERY missed check (not just the ONLINE→OFFLINE transition)
+                    # so consecutive_misses reflects reality, and mutate it under the lock
+                    # (process_heartbeat resets it under the same lock — this was racy).
+                    async with self._lock:
+                        health.consecutive_misses += 1
+
                     if device.status == DeviceStatus.ONLINE:
                         await self._registry.set_status(device.id, DeviceStatus.OFFLINE)
-                        health.consecutive_misses += 1
 
                         await self._event_bus.emit(
                             EventType.DEVICE_OFFLINE,

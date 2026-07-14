@@ -63,6 +63,7 @@ class BLEChannel(BaseChannel):
     """
 
     MAX_PAYLOAD_SIZE = 512  # BLE MTU limit
+    MAX_RX_BUFFER = 65536  # cap per-device reassembly buffer (drop garbage streams)
     SCAN_TIMEOUT = 10.0
     CONNECTION_TIMEOUT = 10.0
 
@@ -274,6 +275,7 @@ class BLEChannel(BaseChannel):
             finally:
                 del self._connections[address]
                 self._address_to_device.pop(address, None)
+                self._rx_buffer.pop(address, None)  # don't leak this device's buffer
 
                 # Update device status
                 for device in self._devices.values():
@@ -310,6 +312,16 @@ class BLEChannel(BaseChannel):
             self._rx_buffer[address] = b""
 
         self._rx_buffer[address] += data
+
+        # Cap the buffer: a partial stream with no delimiter must not grow without bound
+        # (malformed/hostile peer). Drop the garbage and keep going.
+        if len(self._rx_buffer[address]) > self.MAX_RX_BUFFER:
+            logger.warning(
+                "BLE rx buffer overflow for %s (%d bytes) — discarding",
+                address, len(self._rx_buffer[address]),
+            )
+            self._rx_buffer[address] = b""
+            return
 
         # Try to parse complete messages (newline-delimited JSON)
         while b"\n" in self._rx_buffer[address]:

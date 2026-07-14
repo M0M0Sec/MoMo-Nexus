@@ -8,7 +8,7 @@ from nexus.channels.manager import ChannelManager
 from nexus.channels.mock import MockChannel
 from nexus.config import NexusConfig
 from nexus.core.events import EventBus, EventType
-from nexus.domain.enums import ChannelType, ChannelStatus
+from nexus.domain.enums import ChannelStatus, ChannelType
 
 
 class TestChannelManager:
@@ -143,4 +143,55 @@ class TestChannelManager:
         # Initially empty
         summary = manager.get_health_summary()
         assert summary == {}
+
+    @pytest.mark.asyncio
+    async def test_health_monitor_detects_transition(self, manager: ChannelManager) -> None:
+        """Roadmap 2.1: _check_health_once must detect a REAL status transition and emit
+        the matching event. Previously old/new both read the same value → never fired."""
+        events: list = []
+
+        async def handler(event):
+            events.append(event)
+
+        manager._event_bus.subscribe(EventType.CHANNEL_DOWN, handler)
+
+        channel = MockChannel()
+        manager.register_channel(channel)
+        manager._running = False  # isolate: don't schedule recovery side effects
+
+        channel._status = ChannelStatus.UP
+        await manager._check_health_once()  # baseline records UP
+        assert not any(e.type == EventType.CHANNEL_DOWN for e in events)
+
+        channel._status = ChannelStatus.DOWN
+        await manager._check_health_once()  # UP -> DOWN transition
+        assert any(e.type == EventType.CHANNEL_DOWN for e in events)
+
+        # No new event when the status is unchanged.
+        count = len(events)
+        await manager._check_health_once()
+        assert len(events) == count
+
+    @pytest.mark.asyncio
+    async def test_down_transition_schedules_recovery(self, manager: ChannelManager) -> None:
+        """Roadmap 2.1: a DOWN transition must schedule _try_recover_channel."""
+        recovered: list = []
+
+        async def fake_recover(channel_type):
+            recovered.append(channel_type)
+
+        channel = MockChannel()
+        manager.register_channel(channel)
+        manager._running = True
+        manager._try_recover_channel = fake_recover  # type: ignore[assignment]
+
+        channel._status = ChannelStatus.UP
+        await manager._check_health_once()
+        channel._status = ChannelStatus.DOWN
+        await manager._check_health_once()
+
+        # Let the scheduled recovery task run.
+        import asyncio
+        await asyncio.sleep(0)
+        assert ChannelType.MOCK in recovered
 

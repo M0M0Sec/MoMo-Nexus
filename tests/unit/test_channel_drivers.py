@@ -2,14 +2,16 @@
 Tests for channel drivers.
 """
 
+import asyncio
+
 import pytest
 
-from nexus.domain.enums import ChannelType, ChannelStatus
+from nexus.channels.ble import BLEAK_AVAILABLE, BLEChannel
+from nexus.channels.cellular import SERIAL_AVAILABLE, CellularChannel
+from nexus.channels.lora import MESHTASTIC_AVAILABLE, LoRaChannel
+from nexus.channels.wifi import AIOHTTP_AVAILABLE, WiFiChannel
+from nexus.domain.enums import ChannelStatus, ChannelType
 from nexus.domain.models import Message
-from nexus.channels.lora import LoRaChannel, MESHTASTIC_AVAILABLE
-from nexus.channels.cellular import CellularChannel, SERIAL_AVAILABLE
-from nexus.channels.wifi import WiFiChannel, AIOHTTP_AVAILABLE
-from nexus.channels.ble import BLEChannel, BLEAK_AVAILABLE
 
 
 class TestLoRaChannel:
@@ -53,6 +55,18 @@ class TestLoRaChannel:
         assert isinstance(payload, bytes)
         assert len(payload) < LoRaChannel.MAX_PAYLOAD_SIZE
         assert b"momo-001" in payload
+
+    def test_serialize_preserves_full_message_id(self) -> None:
+        """Roadmap 2.9: the full message ID must survive the wire (was truncated to 8
+        chars, breaking ACK correlation and raising collision odds)."""
+        channel = LoRaChannel()
+        msg = Message(src="momo-001", type="status", data={"battery": 85})
+        assert len(msg.id) == 12  # generate_id → uuid4().hex[:12]
+
+        restored = channel._deserialize_message(
+            channel._serialize_message(msg), sender="momo-001"
+        )
+        assert restored.id == msg.id  # full ID, not truncated
 
 
 class TestCellularChannel:
@@ -121,6 +135,24 @@ class TestWiFiChannel:
         ap = WiFiChannel(mode=WiFiMode.AP)
         assert ap.mode == WiFiMode.AP
 
+    @pytest.mark.asyncio
+    async def test_disconnect_cancels_receive_task(self) -> None:
+        """Roadmap 3.5: the WebSocket receive loop must be tracked and cancelled on
+        disconnect (was a dangling create_task that reconnects kept multiplying)."""
+        channel = WiFiChannel()
+
+        async def _sleeper():
+            await asyncio.sleep(3600)
+
+        channel._ws_receive_task = asyncio.create_task(_sleeper())
+        task = channel._ws_receive_task
+
+        await channel._disconnect()
+        await asyncio.sleep(0)  # let the cancellation propagate
+
+        assert task.cancelled()
+        assert channel._ws_receive_task is None
+
     def test_peer_registration(self) -> None:
         """Test peer registration."""
         channel = WiFiChannel()
@@ -155,6 +187,26 @@ class TestBLEChannel:
         channel = BLEChannel()
         assert channel.discovered_devices == {}
         assert channel.connected_devices == []
+
+    @pytest.mark.asyncio
+    async def test_rx_buffer_overflow_discarded(self) -> None:
+        """Roadmap 3.4: a delimiter-less stream must not grow the buffer without bound."""
+        channel = BLEChannel()
+        await channel._handle_notification("AA:BB", b"x" * (BLEChannel.MAX_RX_BUFFER + 10))
+        assert channel._rx_buffer["AA:BB"] == b""  # overflowed → discarded
+
+    @pytest.mark.asyncio
+    async def test_disconnect_clears_rx_buffer(self) -> None:
+        """Roadmap 3.4: disconnecting a device must free its reassembly buffer."""
+        channel = BLEChannel()
+        channel._rx_buffer["AA:BB"] = b"partial-data"
+
+        class _FakeClient:
+            is_connected = False
+
+        channel._connections["AA:BB"] = _FakeClient()
+        await channel.disconnect_device("AA:BB")
+        assert "AA:BB" not in channel._rx_buffer
 
     @pytest.mark.skipif(not BLEAK_AVAILABLE, reason="bleak not installed")
     @pytest.mark.asyncio

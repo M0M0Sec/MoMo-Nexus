@@ -2,8 +2,9 @@
 Tests for domain models.
 """
 
-import pytest
 from datetime import datetime
+
+import pytest
 
 from nexus.domain.enums import (
     ChannelType,

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 class NtfyPriority(str, Enum):
     """Ntfy priority levels."""
-    
+
     MAX = "max"      # 5 - Really long vibration
     HIGH = "high"    # 4 - Long vibration
     DEFAULT = "default"  # 3 - Short vibration
@@ -40,27 +40,27 @@ class NtfyPriority(str, Enum):
 @dataclass
 class NtfyConfig:
     """Ntfy client configuration."""
-    
+
     # Server settings
     enabled: bool = False
     server_url: str = "https://ntfy.sh"  # Public server or self-hosted
     topic: str = "momo-alerts"
-    
+
     # Authentication (optional)
     access_token: str | None = None  # Bearer token
     username: str | None = None      # Basic auth
     password: str | None = None
-    
+
     # Default settings
     default_priority: NtfyPriority = NtfyPriority.DEFAULT
     default_tags: list[str] = field(default_factory=lambda: ["momo"])
-    
+
     # Rate limiting
     min_interval_seconds: int = 5  # Minimum time between notifications
-    
+
     # Filtering
     min_severity: str = "medium"  # Only send alerts >= this severity
-    
+
     @property
     def topic_url(self) -> str:
         """Get full topic URL."""
@@ -70,7 +70,7 @@ class NtfyConfig:
 @dataclass
 class NotificationResult:
     """Result of a notification send attempt."""
-    
+
     success: bool
     message_id: str | None = None
     error: str | None = None
@@ -80,7 +80,7 @@ class NotificationResult:
 class NtfyClient:
     """
     Ntfy.sh push notification client.
-    
+
     Features:
     - Async HTTP client
     - Rate limiting
@@ -89,7 +89,7 @@ class NtfyClient:
     - Click actions
     - File attachments (URLs)
     """
-    
+
     # Map severity to priority
     SEVERITY_PRIORITY_MAP = {
         "critical": NtfyPriority.MAX,
@@ -98,7 +98,7 @@ class NtfyClient:
         "low": NtfyPriority.LOW,
         "info": NtfyPriority.MIN,
     }
-    
+
     # Map alert types to emoji tags
     ALERT_EMOJI_MAP = {
         "handshake_captured": "handshake",
@@ -111,28 +111,28 @@ class NtfyClient:
         "evil_twin_client": "smiling_imp",
         "system_error": "rotating_light",
     }
-    
+
     def __init__(self, config: NtfyConfig) -> None:
         self.config = config
         self._session: aiohttp.ClientSession | None = None
         self._last_send: datetime | None = None
         self._lock = asyncio.Lock()
-        
+
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create HTTP session."""
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
-    
+
     async def close(self) -> None:
         """Close HTTP session."""
         if self._session and not self._session.closed:
             await self._session.close()
-            
+
     def _build_headers(self) -> dict[str, str]:
         """Build request headers with authentication."""
         headers: dict[str, str] = {}
-        
+
         if self.config.access_token:
             headers["Authorization"] = f"Bearer {self.config.access_token}"
         elif self.config.username and self.config.password:
@@ -140,9 +140,9 @@ class NtfyClient:
             credentials = f"{self.config.username}:{self.config.password}"
             encoded = base64.b64encode(credentials.encode()).decode()
             headers["Authorization"] = f"Basic {encoded}"
-            
+
         return headers
-    
+
     async def send(
         self,
         message: str,
@@ -155,7 +155,7 @@ class NtfyClient:
     ) -> NotificationResult:
         """
         Send a push notification.
-        
+
         Args:
             message: Notification body text
             title: Notification title
@@ -164,10 +164,10 @@ class NtfyClient:
             click_url: URL to open when notification is clicked
             attach_url: URL of file to attach
             actions: Action buttons
-            
+
         Returns:
             NotificationResult with success status
-            
+
         Example:
             await client.send(
                 message="CORP-WiFi cracked: Summer2025!",
@@ -179,7 +179,7 @@ class NtfyClient:
         """
         if not self.config.enabled:
             return NotificationResult(success=False, error="Notifications disabled")
-        
+
         # Rate limiting
         async with self._lock:
             if self._last_send:
@@ -188,7 +188,7 @@ class NtfyClient:
                     wait_time = self.config.min_interval_seconds - elapsed
                     await asyncio.sleep(wait_time)
             self._last_send = datetime.now()
-        
+
         # Resolve priority
         if isinstance(priority, str):
             try:
@@ -197,33 +197,33 @@ class NtfyClient:
                 priority = self.config.default_priority
         elif priority is None:
             priority = self.config.default_priority
-            
+
         # Build headers
         headers = self._build_headers()
         headers["Content-Type"] = "text/plain"
-        
+
         if title:
             headers["Title"] = title
         headers["Priority"] = priority.value
-        
+
         # Tags (combine default + custom)
         all_tags = list(self.config.default_tags)
         if tags:
             all_tags.extend(tags)
         if all_tags:
             headers["Tags"] = ",".join(all_tags)
-            
+
         if click_url:
             headers["Click"] = click_url
-            
+
         if attach_url:
             headers["Attach"] = attach_url
-            
+
         # Actions (e.g., view, http, broadcast)
         if actions:
             import json
             headers["Actions"] = json.dumps(actions)
-        
+
         try:
             session = await self._get_session()
             async with session.post(
@@ -246,8 +246,8 @@ class NtfyClient:
                         success=False,
                         error=f"HTTP {response.status}: {error_text}",
                     )
-                    
-        except asyncio.TimeoutError:
+
+        except TimeoutError:
             logger.error("Ntfy request timeout")
             return NotificationResult(success=False, error="Request timeout")
         except aiohttp.ClientError as e:
@@ -256,7 +256,7 @@ class NtfyClient:
         except Exception as e:
             logger.error(f"Ntfy unexpected error: {e}")
             return NotificationResult(success=False, error=str(e))
-    
+
     async def send_alert(
         self,
         alert_type: str,
@@ -268,9 +268,9 @@ class NtfyClient:
     ) -> NotificationResult:
         """
         Send an alert as push notification.
-        
+
         Maps alert severity to priority and adds appropriate emoji.
-        
+
         Args:
             alert_type: Type of alert (handshake_captured, password_cracked, etc.)
             severity: Severity level (critical, high, medium, low, info)
@@ -278,7 +278,7 @@ class NtfyClient:
             message: Alert message
             device_id: Source device ID
             data: Additional alert data
-            
+
         Returns:
             NotificationResult
         """
@@ -286,22 +286,22 @@ class NtfyClient:
         severity_order = ["info", "low", "medium", "high", "critical"]
         min_idx = severity_order.index(self.config.min_severity)
         current_idx = severity_order.index(severity) if severity in severity_order else 2
-        
+
         if current_idx < min_idx:
             return NotificationResult(
-                success=False, 
+                success=False,
                 error=f"Severity {severity} below minimum {self.config.min_severity}"
             )
-        
+
         # Map to priority
         priority = self.SEVERITY_PRIORITY_MAP.get(severity, NtfyPriority.DEFAULT)
-        
+
         # Build tags with emoji
         tags = []
         emoji = self.ALERT_EMOJI_MAP.get(alert_type)
         if emoji:
             tags.append(emoji)
-            
+
         # Add severity emoji
         severity_emoji = {
             "critical": "rotating_light",
@@ -311,12 +311,12 @@ class NtfyClient:
         }
         if severity in severity_emoji and severity_emoji[severity] not in tags:
             tags.append(severity_emoji[severity])
-        
+
         # Build message with device info
         full_message = message
         if device_id:
             full_message = f"[{device_id}] {message}"
-        
+
         # Add key data to message
         if data:
             if "ssid" in data:
@@ -325,18 +325,18 @@ class NtfyClient:
                 full_message += f"\nPassword: {data['password']}"
             if "bssid" in data:
                 full_message += f"\nBSSID: {data['bssid']}"
-        
+
         return await self.send(
             message=full_message,
             title=title,
             priority=priority,
             tags=tags,
         )
-    
+
     async def test(self) -> NotificationResult:
         """
         Send a test notification.
-        
+
         Returns:
             NotificationResult
         """

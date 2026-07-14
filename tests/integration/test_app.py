@@ -2,14 +2,15 @@
 Integration tests for the Nexus application.
 """
 
-import pytest
 import asyncio
 from pathlib import Path
 
-from nexus.config import NexusConfig
+import pytest
+
 from nexus.app import NexusApp
-from nexus.domain.models import Message
+from nexus.config import NexusConfig
 from nexus.domain.enums import MessageType, Priority
+from nexus.domain.models import Message
 
 
 class TestNexusApp:
@@ -152,7 +153,7 @@ class TestEndToEndRouting:
     @pytest.mark.asyncio
     async def test_alert_creation_flow(self, config: NexusConfig) -> None:
         """Test alert creation through fleet manager."""
-        from nexus.fleet.alerts import AlertType, AlertSeverity
+        from nexus.fleet.alerts import AlertSeverity, AlertType
 
         app = NexusApp(config)
         await app.start()
@@ -242,9 +243,9 @@ class TestGeoIntegration:
     @pytest.mark.asyncio
     async def test_zone_event_detection(self, config: NexusConfig) -> None:
         """Test zone enter/exit event detection."""
-        from nexus.geo.zones import CircleZone
         from nexus.geo.location import GPSCoordinate, Location
         from nexus.geo.manager import ZoneEventType
+        from nexus.geo.zones import CircleZone
 
         app = NexusApp(config)
         await app.start()

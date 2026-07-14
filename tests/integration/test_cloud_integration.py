@@ -7,33 +7,34 @@ NOTE: These tests are skipped because Cloud API endpoints are not yet implemente
 Cloud API will be implemented in Phase 3 of the project.
 """
 
-import pytest
 import asyncio
+import base64
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-import base64
+
+import pytest
 
 # Skip all tests in this module - Cloud API not yet implemented
 pytestmark = pytest.mark.skip(reason="Cloud API endpoints not yet implemented - Phase 3")
 
 from fastapi.testclient import TestClient
 
-from nexus.config import NexusConfig
 from nexus.api.app import create_app
 from nexus.cloud import (
-    HashcatCloudClient,
-    EvilginxClient,
     CloudManager,
     CrackJob,
     CrackResult,
+    EvilginxClient,
+    HashcatCloudClient,
     HashType,
     JobStatus,
-    Phishlet,
     Lure,
-    Session,
+    Phishlet,
     PhishletStatus,
+    Session,
 )
+from nexus.config import NexusConfig
 
 
 class TestCloudAPIIntegration:
@@ -66,7 +67,7 @@ class TestCloudAPIIntegration:
     def mock_cloud_manager(self):
         """Create mock cloud manager."""
         manager = MagicMock(spec=CloudManager)
-        
+
         # Hashcat mocks
         manager.submit_crack_job = AsyncMock(return_value=CrackJob(
             id="job-001",
@@ -93,12 +94,12 @@ class TestCloudAPIIntegration:
         ))
         manager.cancel_job = AsyncMock(return_value=True)
         manager.list_jobs = AsyncMock(return_value=[
-            CrackJob(id="job-001", hash_value="h1", hash_type=HashType.WPA2, 
+            CrackJob(id="job-001", hash_value="h1", hash_type=HashType.WPA2,
                     status=JobStatus.COMPLETED, created_at=datetime.now()),
             CrackJob(id="job-002", hash_value="h2", hash_type=HashType.NTLM,
                     status=JobStatus.RUNNING, created_at=datetime.now()),
         ])
-        
+
         # Evilginx mocks
         manager.list_phishlets = AsyncMock(return_value=[
             Phishlet(name="o365", status=PhishletStatus.ENABLED, hostname="login.example.com"),
@@ -125,7 +126,7 @@ class TestCloudAPIIntegration:
                 captured_at=datetime.now(),
             ),
         ])
-        
+
         return manager
 
     @pytest.fixture
@@ -211,7 +212,7 @@ class TestCloudAPIIntegration:
     def test_enable_phishlet(self, client: TestClient, auth_headers: dict, mock_cloud_manager):
         """Test enabling a phishlet."""
         payload = {"hostname": "login.target.com"}
-        
+
         response = client.post(
             "/api/cloud/evilginx/phishlets/google/enable",
             json=payload,
@@ -306,10 +307,10 @@ class TestCloudFlows:
     def mock_cloud_manager(self):
         """Create mock cloud manager."""
         manager = MagicMock(spec=CloudManager)
-        
+
         # Track job states
         job_state = {"status": JobStatus.QUEUED, "progress": 0}
-        
+
         def submit_job(*args, **kwargs):
             return CrackJob(
                 id="flow-job-001",
@@ -318,7 +319,7 @@ class TestCloudFlows:
                 status=JobStatus.QUEUED,
                 created_at=datetime.now(),
             )
-        
+
         def get_status(job_id):
             job_state["progress"] += 25
             if job_state["progress"] >= 100:
@@ -331,7 +332,7 @@ class TestCloudFlows:
                 progress=min(job_state["progress"], 100),
                 created_at=datetime.now(),
             )
-        
+
         manager.submit_crack_job = AsyncMock(side_effect=submit_job)
         manager.get_job_status = AsyncMock(side_effect=get_status)
         manager.get_job_result = AsyncMock(return_value=CrackResult(
@@ -342,7 +343,7 @@ class TestCloudFlows:
             duration_seconds=300,
             completed_at=datetime.now(),
         ))
-        
+
         return manager
 
     @pytest.fixture
@@ -459,14 +460,14 @@ class TestCloudManagerUnit:
         """Test CloudManager initializes with clients."""
         with patch.object(HashcatCloudClient, '__init__', return_value=None), \
              patch.object(EvilginxClient, '__init__', return_value=None):
-            
+
             manager = CloudManager(
                 hashcat_url="https://gpu.example.com",
                 hashcat_key="key1",
                 evilginx_url="https://phish.example.com",
                 evilginx_key="key2",
             )
-            
+
             assert manager is not None
 
     @pytest.mark.asyncio

@@ -232,7 +232,9 @@ class LoRaChannel(BaseChannel):
         # Compact format for LoRa
         compact = {
             "v": message.v,
-            "id": message.id[:8],  # Truncate ID
+            # Full ID (12-char uuid hex). Truncating to 8 broke ACK correlation and
+            # raised collision odds; the 4 extra bytes are negligible for LoRa.
+            "id": message.id,
             "s": message.src,
             "t": message.type if isinstance(message.type, str) else message.type.value,
             "p": message.pri if isinstance(message.pri, str) else message.pri.value,

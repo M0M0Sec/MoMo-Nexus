@@ -13,7 +13,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any
 
 
 class NotifyIcon(str, Enum):
@@ -23,7 +22,7 @@ class NotifyIcon(str, Enum):
     WARN = "⚠️"
     ERROR = "❌"
     INFO = "ℹ️"
-    
+
     # Events
     HANDSHAKE = "🤝"
     CRACK = "🔓"
@@ -33,7 +32,7 @@ class NotifyIcon(str, Enum):
     GPS = "📍"
     BATTERY = "🔋"
     TEMP = "🌡️"
-    
+
     # Devices
     MOMO = "📡"
     GHOST = "👻"
@@ -45,21 +44,21 @@ class NotifyIcon(str, Enum):
 class OperatorNotification:
     """
     Operator notification message.
-    
+
     Designed for quick reading on phone screen.
     """
     icon: NotifyIcon
     title: str
     body: str
     priority: int = 1  # 1=low, 2=normal, 3=high, 4=critical
-    
+
     def to_text(self, compact: bool = True) -> str:
         """
         Format as plain text for LoRa transmission.
-        
+
         Args:
             compact: Use compact format (recommended)
-            
+
         Returns:
             Formatted string, max ~200 chars
         """
@@ -67,13 +66,13 @@ class OperatorNotification:
             # Ultra-compact: "🤝 Handshake | CORP-WiFi captured"
             return f"{self.icon.value} {self.title} | {self.body}"
         else:
-            # Multi-line: 
+            # Multi-line:
             # "🤝 Handshake
             #  CORP-WiFi captured
             #  14:32"
             time_str = datetime.now().strftime("%H:%M")
             return f"{self.icon.value} {self.title}\n{self.body}\n{time_str}"
-    
+
     def __str__(self) -> str:
         return self.to_text(compact=True)
 
@@ -81,18 +80,18 @@ class OperatorNotification:
 class NotificationBuilder:
     """
     Builder for operator notifications.
-    
+
     Provides pre-formatted templates for common events.
-    
+
     Example:
         >>> builder = NotificationBuilder()
         >>> msg = builder.handshake_captured("CORP-WiFi", "AA:BB:CC:DD:EE:FF")
         >>> print(msg)
         🤝 Handshake | CORP-WiFi yakalandı
     """
-    
+
     # ==================== WiFi Events ====================
-    
+
     def handshake_captured(self, ssid: str, bssid: str = "") -> OperatorNotification:
         """Handshake yakalandı bildirimi."""
         body = f"{ssid[:20]} yakalandı"
@@ -104,7 +103,7 @@ class NotificationBuilder:
             body=body,
             priority=3
         )
-    
+
     def pmkid_captured(self, ssid: str) -> OperatorNotification:
         """PMKID yakalandı bildirimi."""
         return OperatorNotification(
@@ -113,7 +112,7 @@ class NotificationBuilder:
             body=f"{ssid[:20]} yakalandı",
             priority=3
         )
-    
+
     def password_cracked(self, ssid: str, password: str) -> OperatorNotification:
         """Şifre kırıldı bildirimi."""
         # Şifreyi kısalt (güvenlik)
@@ -124,7 +123,7 @@ class NotificationBuilder:
             body=f"{ssid[:15]}: {masked}",
             priority=4
         )
-    
+
     def new_target(self, ssid: str, security: str = "WPA2") -> OperatorNotification:
         """Yeni hedef tespit edildi."""
         return OperatorNotification(
@@ -133,9 +132,9 @@ class NotificationBuilder:
             body=f"{ssid[:20]} ({security})",
             priority=2
         )
-    
+
     # ==================== Attack Events ====================
-    
+
     def evil_twin_connect(self, client_mac: str, ssid: str) -> OperatorNotification:
         """Evil Twin'e bağlantı."""
         return OperatorNotification(
@@ -144,11 +143,11 @@ class NotificationBuilder:
             body=f"{client_mac[-8:]} → {ssid[:12]}",
             priority=3
         )
-    
+
     def credential_captured(
-        self, 
-        cred_type: str, 
-        username: str = "", 
+        self,
+        cred_type: str,
+        username: str = "",
         target: str = ""
     ) -> OperatorNotification:
         """Credential yakalandı."""
@@ -163,7 +162,7 @@ class NotificationBuilder:
             body=body,
             priority=4
         )
-    
+
     def karma_client(self, client_mac: str, probed_ssid: str) -> OperatorNotification:
         """Karma/MANA client yakalandı."""
         return OperatorNotification(
@@ -172,9 +171,9 @@ class NotificationBuilder:
             body=f"{client_mac[-8:]} arıyor: {probed_ssid[:12]}",
             priority=2
         )
-    
+
     # ==================== Device Events ====================
-    
+
     def ghost_beacon(self, device_id: str, status: str = "online") -> OperatorNotification:
         """GhostBridge beacon."""
         return OperatorNotification(
@@ -183,7 +182,7 @@ class NotificationBuilder:
             body=f"{device_id}: {status}",
             priority=2
         )
-    
+
     def mimic_trigger(self, payload: str, target_os: str = "") -> OperatorNotification:
         """Mimic tetiklendi."""
         body = payload[:20]
@@ -195,7 +194,7 @@ class NotificationBuilder:
             body=body,
             priority=3
         )
-    
+
     def device_online(self, device_id: str, device_type: str = "momo") -> OperatorNotification:
         """Cihaz çevrimiçi."""
         icons = {
@@ -210,7 +209,7 @@ class NotificationBuilder:
             body=device_id,
             priority=1
         )
-    
+
     def device_offline(self, device_id: str) -> OperatorNotification:
         """Cihaz çevrimdışı."""
         return OperatorNotification(
@@ -219,9 +218,9 @@ class NotificationBuilder:
             body=device_id,
             priority=2
         )
-    
+
     # ==================== System Events ====================
-    
+
     def low_battery(self, device_id: str, percent: int) -> OperatorNotification:
         """Düşük batarya uyarısı."""
         return OperatorNotification(
@@ -230,7 +229,7 @@ class NotificationBuilder:
             body=f"{device_id}: %{percent}",
             priority=3 if percent < 20 else 2
         )
-    
+
     def high_temp(self, device_id: str, temp: int) -> OperatorNotification:
         """Yüksek sıcaklık uyarısı."""
         return OperatorNotification(
@@ -239,7 +238,7 @@ class NotificationBuilder:
             body=f"{device_id}: {temp}°C",
             priority=3
         )
-    
+
     def alert(self, message: str) -> OperatorNotification:
         """Genel uyarı."""
         return OperatorNotification(
@@ -248,9 +247,9 @@ class NotificationBuilder:
             body=message[:50],
             priority=4
         )
-    
+
     # ==================== Status Summary ====================
-    
+
     def status_summary(
         self,
         devices: int,
@@ -260,7 +259,7 @@ class NotificationBuilder:
     ) -> OperatorNotification:
         """
         Durum özeti.
-        
+
         Format: "📊 Durum | D:3 H:12 C:5 A:2"
         """
         body = f"D:{devices} H:{handshakes} C:{cracked}"
@@ -272,7 +271,7 @@ class NotificationBuilder:
             body=body,
             priority=1
         )
-    
+
     def full_status(
         self,
         devices: int,
@@ -283,7 +282,7 @@ class NotificationBuilder:
     ) -> str:
         """
         Tam durum raporu (multi-line).
-        
+
         Format:
         ┌─ MoMo Durum ─┐
         │ 📡 3 cihaz   │
@@ -303,7 +302,7 @@ class NotificationBuilder:
             lines.append(f"│🚨 {alerts} alert")
         lines.append("└────────┘")
         return "\n".join(lines)
-    
+
     def compact_status(
         self,
         devices: int,
@@ -312,7 +311,7 @@ class NotificationBuilder:
     ) -> str:
         """
         Ultra-compact status (1 line).
-        
+
         Format: "📡3 🤝12 🔓5"
         """
         return f"📡{devices} 🤝{handshakes} 🔓{cracked}"

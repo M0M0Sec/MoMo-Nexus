@@ -7,21 +7,22 @@ NOTE: These tests are skipped because Sync API endpoints are not yet implemented
 Sync API will be implemented in Phase 3 of the project.
 """
 
-import pytest
 import asyncio
+import base64
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-import base64
+
+import pytest
 
 # Skip all tests in this module - Sync API not yet implemented
 pytestmark = pytest.mark.skip(reason="Sync API endpoints not yet implemented - Phase 3")
 
 from fastapi.testclient import TestClient
 
-from nexus.config import NexusConfig
 from nexus.api.app import create_app
-from nexus.domain.enums import DeviceType, DeviceStatus
+from nexus.config import NexusConfig
+from nexus.domain.enums import DeviceStatus, DeviceType
 
 
 class TestSyncAPIIntegration:

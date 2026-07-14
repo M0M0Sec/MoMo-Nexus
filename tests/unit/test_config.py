@@ -9,8 +9,8 @@ import pytest
 import yaml
 
 from nexus.config import (
-    NexusConfig,
     ChannelsConfig,
+    NexusConfig,
     RoutingConfig,
     load_config,
 )

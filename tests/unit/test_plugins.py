@@ -6,10 +6,9 @@ import pytest
 
 from nexus.config import NexusConfig
 from nexus.core.events import EventBus
-from nexus.plugins.base import Plugin, PluginMetadata, PluginState, PluginCapability
+from nexus.plugins.base import Plugin, PluginCapability, PluginMetadata, PluginState
 from nexus.plugins.hooks import HookRegistry, HookType, hook
 from nexus.plugins.manager import PluginManager
-
 
 # =============================================================================
 # Test Plugin

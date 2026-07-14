@@ -99,6 +99,7 @@ class WiFiChannel(BaseChannel):
         self._session: aiohttp.ClientSession | None = None
         self._server: asyncio.Server | None = None
         self._websocket: aiohttp.ClientWebSocketResponse | None = None
+        self._ws_receive_task: asyncio.Task | None = None  # tracked receive loop
         self._status = WiFiStatus(
             connected=False,
             ssid=None,
@@ -172,9 +173,18 @@ class WiFiChannel(BaseChannel):
                 self._session = None
             raise ConnectionError(f"WiFi connection failed: {e}")
 
+    def _cancel_ws_receive_task(self) -> None:
+        """Cancel the WebSocket receive-loop task if one is running."""
+        if self._ws_receive_task and not self._ws_receive_task.done():
+            self._ws_receive_task.cancel()
+        self._ws_receive_task = None
+
     async def _disconnect(self) -> None:
         """Disconnect WiFi channel."""
         try:
+            # Stop the receive loop before tearing down the socket.
+            self._cancel_ws_receive_task()
+
             # Close WebSocket
             if self._websocket and not self._websocket.closed:
                 await self._websocket.close()
@@ -333,8 +343,10 @@ class WiFiChannel(BaseChannel):
             self._websocket = await self._session.ws_connect(self._api_endpoint)
             logger.info(f"WebSocket connected: {self._api_endpoint}")
 
-            # Start receive loop
-            asyncio.create_task(self._websocket_receive_loop())
+            # Start receive loop, cancelling any previous one so reconnects (driven by
+            # the health check) don't spawn a growing pile of receive tasks.
+            self._cancel_ws_receive_task()
+            self._ws_receive_task = asyncio.create_task(self._websocket_receive_loop())
 
         except Exception as e:
             logger.warning(f"WebSocket connection failed: {e}")

@@ -7,26 +7,27 @@ NOTE: These tests are skipped because Swarm API has changed significantly.
 Swarm will be tested with real hardware in Phase 4.
 """
 
-import pytest
 import asyncio
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Skip all tests in this module - Swarm API has changed
 pytestmark = pytest.mark.skip(reason="Swarm API changed - will be tested with real hardware")
 
 from nexus.config import NexusConfig
 from nexus.swarm import (
-    SwarmMessage,
-    EventCode,
+    BridgeStats,
     CommandCode,
-    SwarmMessageBuilder,
+    EventCode,
     SequenceTracker,
     SwarmBridge,
     SwarmConfig,
-    BridgeStats,
     SwarmManager,
+    SwarmMessage,
+    SwarmMessageBuilder,
 )
 
 

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class NotificationManager:
     """
     Manages notification channels and dispatches alerts.
-    
+
     Usage:
         manager = NotificationManager()
         manager.configure_ntfy(NtfyConfig(
@@ -30,10 +30,10 @@ class NotificationManager:
             server_url="https://ntfy.sh",
             topic="momo-alerts"
         ))
-        
+
         # Register as alert handler
         alert_manager.add_handler(manager.handle_alert)
-        
+
         # Or send directly
         await manager.notify(
             "Password cracked!",
@@ -41,15 +41,15 @@ class NotificationManager:
             severity="high"
         )
     """
-    
+
     def __init__(self) -> None:
         self._ntfy: NtfyClient | None = None
         self._lock = asyncio.Lock()
-        
+
     # =========================================================================
     # Configuration
     # =========================================================================
-    
+
     def configure_ntfy(self, config: NtfyConfig) -> None:
         """Configure Ntfy.sh client."""
         if config.enabled:
@@ -58,29 +58,29 @@ class NotificationManager:
         else:
             self._ntfy = None
             logger.info("Ntfy disabled")
-    
+
     @property
     def ntfy_enabled(self) -> bool:
         """Check if Ntfy is enabled."""
         return self._ntfy is not None and self._ntfy.config.enabled
-    
+
     # =========================================================================
     # Alert Handler (for AlertManager integration)
     # =========================================================================
-    
+
     async def handle_alert(self, alert: Alert) -> None:
         """
         Handle alert from AlertManager.
-        
+
         This method is designed to be registered as an AlertManager handler:
             alert_manager.add_handler(notification_manager.handle_alert)
-        
+
         Args:
             alert: Alert to process
         """
         if not self._ntfy:
             return
-            
+
         try:
             result = await self._ntfy.send_alert(
                 alert_type=alert.type.value,
@@ -90,17 +90,17 @@ class NotificationManager:
                 device_id=alert.device_id,
                 data=alert.data,
             )
-            
+
             if not result.success:
                 logger.warning(f"Failed to send notification: {result.error}")
-                
+
         except Exception as e:
             logger.error(f"Notification error: {e}")
-    
+
     # =========================================================================
     # Direct Notification API
     # =========================================================================
-    
+
     async def notify(
         self,
         message: str,
@@ -110,18 +110,18 @@ class NotificationManager:
     ) -> bool:
         """
         Send a notification through all enabled channels.
-        
+
         Args:
             message: Notification message
             title: Notification title
             severity: Severity level for priority mapping
             tags: Additional tags/emojis
-            
+
         Returns:
             True if at least one channel succeeded
         """
         success = False
-        
+
         if self._ntfy:
             priority_map = {
                 "critical": "max",
@@ -131,7 +131,7 @@ class NotificationManager:
                 "info": "min",
             }
             priority = priority_map.get(severity, "default")
-            
+
             result = await self._ntfy.send(
                 message=message,
                 title=title,
@@ -139,9 +139,9 @@ class NotificationManager:
                 tags=tags,
             )
             success = success or result.success
-            
+
         return success
-    
+
     async def notify_handshake(
         self,
         ssid: str,
@@ -155,7 +155,7 @@ class NotificationManager:
             severity="high",
             tags=["handshake", "wifi"],
         )
-    
+
     async def notify_cracked(
         self,
         ssid: str,
@@ -169,7 +169,7 @@ class NotificationManager:
             severity="critical",
             tags=["key", "tada"],
         )
-    
+
     async def notify_credential(
         self,
         username: str,
@@ -183,7 +183,7 @@ class NotificationManager:
             severity="high",
             tags=["fishing_pole_and_fish", "lock"],
         )
-    
+
     async def notify_device_offline(
         self,
         device_id: str,
@@ -193,22 +193,22 @@ class NotificationManager:
         message = f"Device {device_id} went offline"
         if last_seen:
             message += f"\nLast seen: {last_seen}"
-            
+
         return await self.notify(
             message=message,
             title="⚠️ Device Offline",
             severity="medium",
             tags=["warning", "satellite"],
         )
-    
+
     # =========================================================================
     # Testing
     # =========================================================================
-    
+
     async def test_ntfy(self) -> dict:
         """
         Test Ntfy connection.
-        
+
         Returns:
             Dict with success status and details
         """
@@ -218,7 +218,7 @@ class NotificationManager:
                 "error": "Ntfy not configured",
                 "enabled": False,
             }
-            
+
         result = await self._ntfy.test()
         return {
             "success": result.success,
@@ -228,11 +228,11 @@ class NotificationManager:
             "server": self._ntfy.config.server_url,
             "topic": self._ntfy.config.topic,
         }
-    
+
     # =========================================================================
     # Lifecycle
     # =========================================================================
-    
+
     async def close(self) -> None:
         """Close all notification clients."""
         if self._ntfy:

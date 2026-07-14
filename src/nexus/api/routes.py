@@ -117,7 +117,7 @@ def get_router(request: Request):
 async def get_status(request: Request, _: str = require_auth):
     """
     Get system status.
-    
+
     Returns current system status including:
     - Online/offline devices count
     - Channel availability
@@ -141,12 +141,12 @@ async def get_status(request: Request, _: str = require_auth):
 async def health_check():
     """
     Health check endpoint.
-    
+
     No authentication required. Use this endpoint for:
     - Load balancer health checks
     - Monitoring systems
     - Uptime verification
-    
+
     Returns:
         status: "ok" if healthy
         version: Current API version
@@ -158,7 +158,7 @@ async def health_check():
 async def get_stats(request: Request, _: str = require_auth):
     """
     Get detailed system statistics.
-    
+
     Returns aggregated stats including:
     - Total devices registered
     - Active connections per channel
@@ -185,10 +185,10 @@ async def list_devices(
 ):
     """
     List all registered devices.
-    
+
     Returns a list of all devices registered with Nexus.
     Supports filtering by status and device type.
-    
+
     Examples:
     - GET /devices?status=online - All online devices
     - GET /devices?type=momo - All MoMo field units
@@ -226,7 +226,7 @@ async def get_device(
 ):
     """
     Get device details.
-    
+
     Returns detailed information about a specific device including:
     - Current status and last seen time
     - Battery level and version
@@ -260,7 +260,7 @@ async def get_device_health(
 ):
     """
     Get device health information.
-    
+
     Returns health metrics including:
     - Health score (0-100)
     - Heartbeat status
@@ -295,7 +295,7 @@ async def unregister_device(
 ):
     """
     Unregister a device.
-    
+
     Removes the device from Nexus fleet management.
     The device will need to re-register to reconnect.
     """
@@ -325,19 +325,19 @@ async def send_command(
 ):
     """
     Send command to a device.
-    
+
     Available commands depend on device type:
-    
+
     **MoMo commands:**
     - `scan` - Start WiFi scanning
     - `capture` - Begin handshake capture
     - `stop` - Stop current operation
     - `reboot` - Restart device
-    
+
     **GhostBridge commands:**
     - `beacon` - Send beacon
     - `stealth` - Toggle stealth mode
-    
+
     **Mimic commands:**
     - `execute` - Run payload
     - `switch_mode` - Change USB mode
@@ -688,13 +688,13 @@ async def get_notification_status(
 ):
     """
     Get notification system status.
-    
+
     Returns the status of all notification channels:
     - Ntfy.sh: enabled, server URL, topic
     - Future: Telegram, Discord, etc.
     """
     manager = get_notification_manager(request)
-    
+
     return {
         "ntfy": {
             "enabled": manager.ntfy_enabled,
@@ -713,21 +713,18 @@ async def test_notification(
 ):
     """
     Send a test notification.
-    
+
     Sends a test message through all enabled notification channels.
     Use this to verify your notification setup is working.
-    
+
     Returns:
         success: Whether any notification was sent successfully
         channels: Status of each notification channel
     """
     manager = get_notification_manager(request)
-    
-    message = body.message if body else "Test notification from MoMo Nexus"
-    title = body.title if body else "🧪 Test Notification"
-    
+
     result = await manager.test_ntfy()
-    
+
     return {
         "success": result.get("success", False),
         "channels": {
@@ -746,25 +743,25 @@ async def send_notification(
 ):
     """
     Send a custom notification.
-    
+
     Manually trigger a notification through all enabled channels.
-    
+
     Args:
         message: Notification body text
         title: Notification title (optional)
         severity: Severity level for priority mapping
-    
+
     Returns:
         success: Whether notification was sent
     """
     manager = get_notification_manager(request)
-    
+
     success = await manager.notify(
         message=message,
         title=title,
         severity=severity,
     )
-    
+
     return {"success": success, "message": message}
 
 
@@ -776,7 +773,7 @@ async def update_ntfy_config(
 ):
     """
     Update Ntfy.sh configuration.
-    
+
     Allows updating Ntfy settings without restarting:
     - Enable/disable notifications
     - Change server URL or topic
@@ -784,10 +781,10 @@ async def update_ntfy_config(
     - Adjust minimum severity filter
     """
     from nexus.notifications.ntfy import NtfyConfig as NtfyClientConfig
-    
+
     manager = get_notification_manager(request)
     config = request.app.state.config
-    
+
     # Update config
     if body.enabled is not None:
         config.notifications.ntfy.enabled = body.enabled
@@ -799,7 +796,7 @@ async def update_ntfy_config(
         config.notifications.ntfy.access_token = body.access_token
     if body.min_severity is not None:
         config.notifications.ntfy.min_severity = body.min_severity
-    
+
     # Reconfigure manager
     ntfy_config = NtfyClientConfig(
         enabled=config.notifications.ntfy.enabled,
@@ -809,7 +806,7 @@ async def update_ntfy_config(
         min_severity=config.notifications.ntfy.min_severity,
     )
     manager.configure_ntfy(ntfy_config)
-    
+
     return {
         "success": True,
         "config": {

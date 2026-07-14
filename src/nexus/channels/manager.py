@@ -50,6 +50,13 @@ class ChannelManager:
         # Channel health history
         self._health_history: dict[ChannelType, list[tuple[datetime, bool]]] = {}
 
+        # Last observed status per channel, so the monitor can detect transitions
+        # across iterations (it previously compared a value to itself — dead code).
+        self._last_status: dict[ChannelType, ChannelStatus] = {}
+
+        # Strong refs to recovery tasks so they aren't garbage-collected mid-run.
+        self._recovery_tasks: set[asyncio.Task] = set()
+
     # =========================================================================
     # Properties
     # =========================================================================
@@ -243,40 +250,7 @@ class ChannelManager:
         while self._running:
             try:
                 await asyncio.sleep(30)  # Check every 30 seconds
-
-                for channel_type, channel in self._channels.items():
-                    old_status = channel.status
-                    new_status = channel.status  # Will be updated by channel's own health check
-
-                    # Record health history
-                    is_healthy = new_status == ChannelStatus.UP
-                    self._health_history[channel_type].append((datetime.now(), is_healthy))
-
-                    # Keep only last 100 entries
-                    if len(self._health_history[channel_type]) > 100:
-                        self._health_history[channel_type] = self._health_history[channel_type][-100:]
-
-                    # Emit events on status change
-                    if old_status != new_status:
-                        if new_status == ChannelStatus.UP:
-                            await self._event_bus.emit(
-                                EventType.CHANNEL_UP,
-                                {"channel": channel_type.value},
-                            )
-                        elif new_status == ChannelStatus.DEGRADED:
-                            await self._event_bus.emit(
-                                EventType.CHANNEL_DEGRADED,
-                                {"channel": channel_type.value},
-                            )
-                        elif new_status == ChannelStatus.DOWN:
-                            await self._event_bus.emit(
-                                EventType.CHANNEL_DOWN,
-                                {"channel": channel_type.value},
-                            )
-
-                            # Try to restart down channels
-                            if self._running:
-                                asyncio.create_task(self._try_recover_channel(channel_type))
+                await self._check_health_once()
 
             except asyncio.CancelledError:
                 break
@@ -284,6 +258,47 @@ class ChannelManager:
                 logger.error(f"Health monitor error: {e}")
 
         logger.info("Health monitor stopped")
+
+    async def _check_health_once(self) -> None:
+        """Run a single health-check pass: detect status transitions, emit events,
+        and schedule recovery for channels that went DOWN.
+
+        Extracted from the monitor loop so it can be unit-tested without the 30s sleep.
+        """
+        for channel_type, channel in self._channels.items():
+            # Compare the channel's CURRENT status against the value recorded on the
+            # previous pass — a real transition, not value-vs-itself (the old bug).
+            new_status = channel.status
+            old_status = self._last_status.get(channel_type, new_status)
+            self._last_status[channel_type] = new_status
+
+            # Record health history
+            is_healthy = new_status == ChannelStatus.UP
+            self._health_history[channel_type].append((datetime.now(), is_healthy))
+            if len(self._health_history[channel_type]) > 100:
+                self._health_history[channel_type] = self._health_history[channel_type][-100:]
+
+            # Emit events on status change
+            if old_status == new_status:
+                continue
+
+            if new_status == ChannelStatus.UP:
+                await self._event_bus.emit(
+                    EventType.CHANNEL_UP, {"channel": channel_type.value}
+                )
+            elif new_status == ChannelStatus.DEGRADED:
+                await self._event_bus.emit(
+                    EventType.CHANNEL_DEGRADED, {"channel": channel_type.value}
+                )
+            elif new_status == ChannelStatus.DOWN:
+                await self._event_bus.emit(
+                    EventType.CHANNEL_DOWN, {"channel": channel_type.value}
+                )
+                # Try to restart down channels (keep a strong task ref).
+                if self._running:
+                    task = asyncio.create_task(self._try_recover_channel(channel_type))
+                    self._recovery_tasks.add(task)
+                    task.add_done_callback(self._recovery_tasks.discard)
 
     async def _try_recover_channel(self, channel_type: ChannelType) -> None:
         """Attempt to recover a failed channel."""

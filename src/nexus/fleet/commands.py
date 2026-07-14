@@ -178,18 +178,22 @@ class CommandDispatcher:
                 if pending.future and not pending.future.done():
                     pending.future.set_result(pending.result)
 
+                # Send failed → no response will ever arrive; move out of _pending
+                # so it does not leak (previously only the wait-branch cleaned up).
+                await self._complete_command(command.id)
                 return pending.result
 
         except Exception as e:
             logger.error(f"Command dispatch failed: {e}")
             pending.status = CommandStatus.FAILED
-
-            return CommandResult(
+            pending.result = CommandResult(
                 command_id=command.id,
                 device_id=device_id,
                 success=False,
                 error=str(e),
             )
+            await self._complete_command(command.id)  # don't leak on error
+            return pending.result
 
         # Wait for result if requested
         if wait and pending.future:
@@ -328,6 +332,34 @@ class CommandDispatcher:
                 # Trim history
                 if len(self._history) > self._max_history:
                     self._history = self._history[-self._max_history:]
+
+    async def sweep_expired(self, grace_seconds: float = 5.0) -> int:
+        """Time out fire-and-forget (wait=False) commands whose response never arrived.
+
+        Without this, a dispatched command that gets no reply lingers in `_pending`
+        forever. Call this periodically. Returns the number of commands swept.
+        """
+        now = datetime.now()
+        expired: list[str] = []
+        async with self._lock:
+            for cmd_id, pending in self._pending.items():
+                age = (now - pending.created_at).total_seconds()
+                if age > pending.command.timeout + grace_seconds:
+                    pending.status = CommandStatus.TIMEOUT
+                    if pending.future and not pending.future.done():
+                        pending.future.set_result(
+                            CommandResult(
+                                command_id=cmd_id,
+                                device_id=pending.command.device_id,
+                                success=False,
+                                error="Command timeout (swept)",
+                            )
+                        )
+                    expired.append(cmd_id)
+
+        for cmd_id in expired:
+            await self._complete_command(cmd_id)
+        return len(expired)
 
     # =========================================================================
     # Command Queries

@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 from datetime import datetime
 from typing import Any
 
@@ -155,7 +156,8 @@ async def websocket_endpoint(
     config = websocket.app.state.config
     if config.server.auth_enabled:
         expected_key = websocket.app.state.api_key
-        if not api_key or api_key != expected_key:
+        # SECURITY: constant-time comparison (matches HTTP auth); plain != leaks timing.
+        if not api_key or not secrets.compare_digest(api_key, expected_key):
             await websocket.close(code=4001, reason="Invalid API key")
             return
 

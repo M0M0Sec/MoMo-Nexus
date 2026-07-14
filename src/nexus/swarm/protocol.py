@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -120,6 +121,24 @@ class SwarmMessage:
     timestamp: int = field(default_factory=lambda: int(time.time()))
     sequence: int = 0
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain dict (the wire shape, minus JSON encoding).
+
+        Prefer this over to_json() when embedding a swarm message inside another
+        structured payload, to avoid double JSON-encoding (escaped-string bloat).
+        """
+        msg: dict[str, Any] = {
+            "v": self.version,
+            "t": self.type.value if isinstance(self.type, SwarmMessageType) else self.type,
+            "src": self.source,
+            "ts": self.timestamp,
+            "seq": self.sequence,
+            "d": self.data,
+        }
+        if self.destination:
+            msg["dst"] = self.destination
+        return msg
+
     def to_json(self, compact: bool = True) -> str:
         """
         Serialize message to JSON string.
@@ -130,18 +149,7 @@ class SwarmMessage:
         Returns:
             JSON string representation
         """
-        msg: dict[str, Any] = {
-            "v": self.version,
-            "t": self.type.value if isinstance(self.type, SwarmMessageType) else self.type,
-            "src": self.source,
-            "ts": self.timestamp,
-            "seq": self.sequence,
-            "d": self.data
-        }
-
-        if self.destination:
-            msg["dst"] = self.destination
-
+        msg = self.to_dict()
         if compact:
             return json.dumps(msg, separators=(',', ':'))
         return json.dumps(msg)
@@ -149,6 +157,40 @@ class SwarmMessage:
     def to_bytes(self) -> bytes:
         """Serialize message to bytes for transmission."""
         return self.to_json(compact=True).encode('utf-8')
+
+    @classmethod
+    def from_dict(cls, data: Any) -> SwarmMessage | None:
+        """Parse a message from an already-decoded dict (see to_dict). Returns None on
+        any validation failure."""
+        try:
+            if not isinstance(data, dict):
+                return None
+
+            # Validate required fields
+            required = ['v', 't', 'src', 'ts', 'seq', 'd']
+            if not all(k in data for k in required):
+                return None
+
+            # Validate version
+            if data['v'] != 1:
+                return None
+
+            # Parse message type. An unknown type is an unsupported/malformed message —
+            # reject it (the ValueError is caught below → None) instead of storing a raw
+            # string, which would later break `.type.value` accesses on the receive path.
+            msg_type = SwarmMessageType(data['t'])
+
+            return cls(
+                version=data['v'],
+                type=msg_type,
+                source=data['src'],
+                destination=data.get('dst'),
+                timestamp=data['ts'],
+                sequence=data['seq'],
+                data=data['d']
+            )
+        except (KeyError, ValueError):
+            return None
 
     @classmethod
     def from_json(cls, json_str: str) -> SwarmMessage | None:
@@ -162,33 +204,8 @@ class SwarmMessage:
             SwarmMessage object or None if parsing fails
         """
         try:
-            data = json.loads(json_str)
-
-            # Validate required fields
-            required = ['v', 't', 'src', 'ts', 'seq', 'd']
-            if not all(k in data for k in required):
-                return None
-
-            # Validate version
-            if data['v'] != 1:
-                return None
-
-            # Parse message type
-            try:
-                msg_type = SwarmMessageType(data['t'])
-            except ValueError:
-                msg_type = data['t']  # type: ignore
-
-            return cls(
-                version=data['v'],
-                type=msg_type,
-                source=data['src'],
-                destination=data.get('dst'),
-                timestamp=data['ts'],
-                sequence=data['seq'],
-                data=data['d']
-            )
-        except (json.JSONDecodeError, KeyError, ValueError):
+            return cls.from_dict(json.loads(json_str))
+        except (json.JSONDecodeError, ValueError):
             return None
 
     @classmethod
@@ -457,50 +474,82 @@ class SequenceTracker:
     replay attempts while allowing for out-of-order delivery.
     """
 
-    def __init__(self, window_size: int = 100):
+    def __init__(self, window_size: int = 100, max_sources: int = 1000):
         """
         Initialize sequence tracker.
 
         Args:
             window_size: Size of sequence window for replay detection
+            max_sources: Max distinct source IDs to track (LRU-evicted). Bounds memory
+                against many devices or spoofed source IDs.
         """
         self.window_size = window_size
+        self.max_sources = max_sources
         self._last_seq: dict[str, int] = {}
-        self._seen: dict[str, list[int]] = {}
+        # OrderedDict so the least-recently-used source can be evicted at the cap.
+        self._seen: OrderedDict[str, list[int]] = OrderedDict()
+
+    # 16-bit sequence space (matches the on-wire uint16 sequence field).
+    _SEQ_SPACE = 65536
+
+    @classmethod
+    def _delta(cls, a: int, b: int) -> int:
+        """Signed distance a-b in 16-bit sequence space, in [-32768, 32767].
+
+        Wrap-aware: _delta(5, 65530) == 11 (5 is 11 ahead of 65530 after wrap).
+        """
+        d = (a - b) % cls._SEQ_SPACE
+        if d >= cls._SEQ_SPACE // 2:
+            d -= cls._SEQ_SPACE
+        return d
 
     def is_valid(self, source: str, sequence: int) -> bool:
         """
-        Check if sequence number is valid (not a replay).
+        Check if a sequence number is valid (not a replay, not too old).
 
-        Args:
-            source: Source device ID
-            sequence: Sequence number to check
+        Sliding-window semantics (as documented): accepts in-order and *out-of-order*
+        messages within `window_size` of the highest seen sequence, rejects exact
+        replays and sequences older than the window. Wrap-around (65535 → 0) is handled
+        via modular distance.
 
         Returns:
-            True if valid, False if replay detected
+            True if valid (first time seen, within window); False for replay / too old.
         """
-        last = self._last_seq.get(source, -1)
+        # Bound the number of tracked sources (LRU). Evict the oldest when a NEW source
+        # would exceed the cap — protects against spoofed/one-off source IDs.
+        if source not in self._seen and len(self._seen) >= self.max_sources:
+            old_source, _ = self._seen.popitem(last=False)
+            self._last_seq.pop(old_source, None)
 
-        # Handle wrap-around (65535 → 0)
-        if sequence > last or (last > 60000 and sequence < 5000):
+        seen = self._seen.setdefault(source, [])
+        self._seen.move_to_end(source)  # mark most-recently-used
+        last = self._last_seq.get(source)
+
+        # First message from this source.
+        if last is None:
             self._last_seq[source] = sequence
-
-            # Track recent sequences
-            if source not in self._seen:
-                self._seen[source] = []
-            self._seen[source].append(sequence)
-
-            # Trim old sequences
-            if len(self._seen[source]) > self.window_size:
-                self._seen[source] = self._seen[source][-self.window_size:]
-
+            seen.append(sequence)
             return True
 
-        # Check if we've seen this exact sequence recently
-        if source in self._seen and sequence in self._seen[source]:
+        # Exact replay of a recently-seen sequence.
+        if sequence in seen:
             return False
 
-        return False
+        delta = self._delta(sequence, last)  # >0 ahead of window head, <0 behind
+
+        if delta > 0:
+            # Newer than the highest seen — advance the window head.
+            self._last_seq[source] = sequence
+        elif -delta > self.window_size:
+            # Older than the window — cannot distinguish from a replay → reject.
+            return False
+        # else: older but within the window and not seen before → accept out-of-order
+        # without moving the window head backwards.
+
+        seen.append(sequence)
+        if len(seen) > self.window_size:
+            del seen[: -self.window_size]
+        return True
 
     def reset(self, source: str | None = None) -> None:
         """

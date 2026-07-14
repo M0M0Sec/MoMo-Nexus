@@ -50,6 +50,7 @@ dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
+    "httpx>=0.27.0",  # required by FastAPI/Starlette TestClient (integration/e2e tests)
     "ruff>=0.1.0",
     "mypy>=1.5.0",
 ]
@@ -63,6 +64,7 @@ api = [
     "uvicorn>=0.24.0",
     "fastapi>=0.104.0",
     "websockets>=12.0",
+    "python-multipart>=0.0.6",  # required by FastAPI Form/UploadFile (api/cloud, api/sync)
 ]
 full = [
     "momo-nexus[lora,ble,api]",
@@ -86,6 +88,9 @@ packages = ["src/nexus"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
+# Put the src/ layout on the path so tests import `nexus` reliably even when the
+# editable install misbehaves (observed on Python 3.14 + hatchling).
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
@@ -93,7 +98,11 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
-ignore = ["E501", "B008", "B027", "SIM102", "SIM105"]
+ignore = [
+    "E501", "B008", "B027", "SIM102", "SIM105",
+    # `class X(str, Enum)` is intentional; StrEnum changes str()/serialization behavior.
+    "UP042",
+]
 
 [tool.ruff.lint.per-file-ignores]
 # API routes use FastAPI dependency injection patterns
@@ -113,7 +122,8 @@ ignore = ["E501", "B008", "B027", "SIM102", "SIM105"]
 # Plugins may have empty methods as hooks
 "src/nexus/plugins/*.py" = ["B027"]
 # Tests
-"tests/**/*.py" = ["F401", "E741", "B904"]
+# Tests: allow local imports after skip-guards, scratch vars, broad raises/excepts.
+"tests/**/*.py" = ["F401", "E741", "B904", "E402", "F841", "B017", "E722", "F811", "W293"]
 
 [tool.mypy]
 python_version = "3.11"

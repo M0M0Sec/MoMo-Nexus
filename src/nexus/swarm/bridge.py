@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -139,12 +140,18 @@ class SwarmBridge:
         self._alert_times: list[float] = []
 
         # Known devices
-        self._devices: dict[str, dict[str, Any]] = {}
+        # LRU-bounded: device_id comes from the (untrusted) message source, so cap it.
+        self._devices: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._max_tracked_devices = 500
 
         # Tasks
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._running = False
-        
+
+        # Strong refs to fire-and-forget send tasks so they aren't GC'd before
+        # completing (and so their failures are surfaced, not silently swallowed).
+        self._send_tasks: set[asyncio.Task] = set()
+
         # Notification builder for operator messages
         self.notify = NotificationBuilder()
 
@@ -182,15 +189,21 @@ class SwarmBridge:
 
     async def stop(self) -> None:
         """Stop the swarm bridge."""
+        # Send the shutdown notification while still running, and AWAIT the actual send.
+        # send_alert() is fire-and-forget and _send_swarm_message() is guarded by
+        # `_running`, so the previous order (running=False THEN send_alert) dropped it.
+        if self._running and self._lora is not None:
+            with contextlib.suppress(Exception):
+                await self._send_swarm_message(
+                    self.builder.alert(EventCode.SHUTDOWN, {"msg": "Nexus Swarm offline"})
+                )
+
         self._running = False
 
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._heartbeat_task
-
-        # Send shutdown notification
-        self.send_alert(EventCode.SHUTDOWN, {"msg": "Nexus Swarm offline"})
 
         logger.info("Swarm bridge stopped")
 
@@ -215,6 +228,18 @@ class SwarmBridge:
 
         self._alert_times.append(now)
         return True
+
+    def _spawn_send(self, msg: SwarmMessage) -> None:
+        """Fire-and-forget a swarm send while keeping a strong task ref and logging
+        any failure (a bare create_task can be GC'd and swallows exceptions)."""
+        task = asyncio.create_task(self._send_swarm_message(msg))
+        self._send_tasks.add(task)
+        task.add_done_callback(self._on_send_done)
+
+    def _on_send_done(self, task: asyncio.Task) -> None:
+        self._send_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Swarm send task failed: %s", task.exception())
 
     async def _send_swarm_message(self, msg: SwarmMessage) -> bool:
         """
@@ -241,7 +266,10 @@ class SwarmBridge:
                 type=MessageType.DATA,  # Swarm uses DATA type
                 pri=Priority.NORMAL,
                 data={
-                    "swarm": msg.to_json(compact=True)
+                    # Embed as a structured dict, NOT a pre-serialized JSON string, so
+                    # the outer serialization doesn't double-encode (escaped-string bloat
+                    # that can push the payload past the LoRa size limit).
+                    "swarm": msg.to_dict()
                 },
             )
 
@@ -282,7 +310,7 @@ class SwarmBridge:
         msg = self.builder.alert(event, data, destination)
 
         # Fire and forget
-        asyncio.create_task(self._send_swarm_message(msg))
+        self._spawn_send(msg)
         self.stats.alerts_sent += 1
 
         return True
@@ -305,7 +333,7 @@ class SwarmBridge:
             True if sent successfully
         """
         msg = self.builder.command(cmd, params, destination)
-        asyncio.create_task(self._send_swarm_message(msg))
+        self._spawn_send(msg)
         return True
 
     def send_status(self) -> bool:
@@ -325,7 +353,7 @@ class SwarmBridge:
         )
 
         self.stats.last_heartbeat = time.time()
-        asyncio.create_task(self._send_swarm_message(msg))
+        self._spawn_send(msg)
         return True
 
     # ==================== Operator Notifications ====================
@@ -339,7 +367,7 @@ class SwarmBridge:
 
         Returns:
             True if sent successfully
-        
+
         Example:
             >>> await bridge.send_notification(
             ...     bridge.notify.handshake_captured("CORP-WiFi")
@@ -350,12 +378,12 @@ class SwarmBridge:
 
         # Create a simple text message for Meshtastic
         text = notification.to_text(compact=True)
-        
+
         msg = self.builder.alert(
             EventCode.ALERT,
             {"text": text, "pri": notification.priority},
         )
-        
+
         success = await self._send_swarm_message(msg)
         if success:
             self.stats.alerts_sent += 1
@@ -374,9 +402,9 @@ class SwarmBridge:
         return True
 
     def notify_credential(
-        self, 
-        cred_type: str, 
-        username: str = "", 
+        self,
+        cred_type: str,
+        username: str = "",
         target: str = ""
     ) -> bool:
         """Quick: Send credential captured notification."""
@@ -401,15 +429,15 @@ class SwarmBridge:
     ) -> bool:
         """
         Send status summary to operator phone.
-        
+
         Args:
             handshakes: Number of handshakes captured
             cracked: Number of passwords cracked
             alerts: Number of alerts
-            
+
         Returns:
             True if sent
-            
+
         Example output on phone:
             📊 Durum | D:3 H:12 C:5 A:2
         """
@@ -433,8 +461,13 @@ class SwarmBridge:
             if "swarm" not in nexus_msg.data:
                 return
 
-            swarm_json = nexus_msg.data["swarm"]
-            msg = SwarmMessage.from_json(swarm_json)
+            swarm_payload = nexus_msg.data["swarm"]
+            # New senders embed a dict (no double-encoding); tolerate the legacy
+            # JSON-string form for backward compatibility.
+            if isinstance(swarm_payload, str):
+                msg = SwarmMessage.from_json(swarm_payload)
+            else:
+                msg = SwarmMessage.from_dict(swarm_payload)
 
             if not msg:
                 logger.warning("Invalid swarm message format")
@@ -471,10 +504,14 @@ class SwarmBridge:
     def _update_device(self, device_id: str, msg: SwarmMessage) -> None:
         """Update device tracking info."""
         if device_id not in self._devices:
+            # Evict the least-recently-updated device at the cap (bounds spoofed IDs).
+            while len(self._devices) >= self._max_tracked_devices:
+                self._devices.popitem(last=False)
             self._devices[device_id] = {
                 "first_seen": time.time(),
                 "message_count": 0,
             }
+        self._devices.move_to_end(device_id)  # mark most-recently-updated
 
         self._devices[device_id].update({
             "last_seen": time.time(),

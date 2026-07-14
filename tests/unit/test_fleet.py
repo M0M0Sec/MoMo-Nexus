@@ -2,16 +2,17 @@
 Tests for fleet management.
 """
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 
 from nexus.config import NexusConfig
 from nexus.core.events import EventBus, EventType
 from nexus.domain.enums import DeviceStatus, DeviceType, MessageType, Priority
 from nexus.domain.models import Device, Message
-from nexus.fleet.registry import DeviceRegistry
-from nexus.fleet.monitor import HealthMonitor
 from nexus.fleet.alerts import AlertManager, AlertSeverity, AlertType
+from nexus.fleet.monitor import HealthMonitor
+from nexus.fleet.registry import DeviceRegistry
 
 
 class TestDeviceRegistry:
@@ -159,6 +160,24 @@ class TestHealthMonitor:
         assert health.battery == 85
         assert health.cpu == 45
         assert health.consecutive_misses == 0
+
+    @pytest.mark.asyncio
+    async def test_missed_heartbeats_counted_every_check(self, monitor: HealthMonitor) -> None:
+        """Roadmap 2.7: consecutive_misses must increment on EVERY missed check (not just
+        the ONLINE→OFFLINE transition) and be mutated under the lock."""
+        await monitor._registry.register("momo-001")
+        dev = await monitor._registry.get("momo-001")
+        dev.status = DeviceStatus.ONLINE
+        dev.last_seen = datetime.now() - timedelta(
+            seconds=monitor._heartbeat_timeout + 100
+        )
+
+        await monitor._check_devices()  # transition → OFFLINE, miss #1
+        health = await monitor.get_health("momo-001")
+        assert health.consecutive_misses == 1
+
+        await monitor._check_devices()  # already OFFLINE, but still a miss → #2
+        assert health.consecutive_misses == 2
 
     @pytest.mark.asyncio
     async def test_health_score(self, monitor: HealthMonitor) -> None:
@@ -311,3 +330,64 @@ class TestAlertManager:
         assert stats["unacknowledged"] == 3
         assert AlertSeverity.MEDIUM.value in str(stats["by_severity"])
 
+
+
+# ---------------------------------------------------------------------------
+# CommandDispatcher — _pending leak fixes (remediation plan 2.3)
+# ---------------------------------------------------------------------------
+class _FakeRouteResult:
+    def __init__(self, success: bool) -> None:
+        self.success = success
+
+
+class _FakeRouter:
+    def __init__(self, success: bool = True, raises: bool = False) -> None:
+        self._success = success
+        self._raises = raises
+
+    async def route(self, message):
+        if self._raises:
+            raise RuntimeError("route boom")
+        return _FakeRouteResult(self._success)
+
+
+class TestCommandDispatcherLeaks:
+    async def _dispatcher(self, router):
+        from nexus.fleet.commands import CommandDispatcher
+        config = NexusConfig()
+        event_bus = EventBus()
+        registry = DeviceRegistry(config=config, event_bus=event_bus)
+        await registry.register("momo-001", DeviceType.MOMO)
+        return CommandDispatcher(
+            router=router, registry=registry, config=config, event_bus=event_bus
+        )
+
+    @pytest.mark.asyncio
+    async def test_failed_send_does_not_leak_pending(self):
+        d = await self._dispatcher(_FakeRouter(success=False))
+        result = await d.dispatch("momo-001", "ping", wait=False)
+        assert result.success is False
+        assert len(d._pending) == 0  # cleaned up, not leaked
+
+    @pytest.mark.asyncio
+    async def test_exception_does_not_leak_pending(self):
+        d = await self._dispatcher(_FakeRouter(raises=True))
+        result = await d.dispatch("momo-001", "ping", wait=False)
+        assert result.success is False
+        assert len(d._pending) == 0
+
+    @pytest.mark.asyncio
+    async def test_sweep_expired_removes_stale_pending(self):
+        d = await self._dispatcher(_FakeRouter(success=True))
+        result = await d.dispatch("momo-001", "ping", wait=False)
+        assert result.pending is True
+        assert len(d._pending) == 1  # legitimately pending (fire-and-forget)
+
+        # Age the pending command past its timeout, then sweep.
+        for pending in d._pending.values():
+            pending.created_at = datetime.now() - timedelta(
+                seconds=pending.command.timeout + 100
+            )
+        swept = await d.sweep_expired()
+        assert swept == 1
+        assert len(d._pending) == 0

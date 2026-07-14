@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from nexus.channels.base import BaseChannel, ChannelError
-from nexus.channels.mock import MockChannel, LoopbackChannel, UnreliableChannel
+from nexus.channels.mock import LoopbackChannel, MockChannel, UnreliableChannel
 from nexus.domain.enums import ChannelStatus, ChannelType, MessageType
 from nexus.domain.models import Message
 
@@ -175,7 +175,7 @@ class TestUnreliableChannel:
     async def test_high_failure_rate(self) -> None:
         """Test that unreliable channel has failures."""
         from nexus.channels.base import ChannelError
-        
+
         channel = UnreliableChannel(failure_rate=0.7)
         await channel.connect()
 

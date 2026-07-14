@@ -67,9 +67,9 @@ class NexusAPI:
         """Create and configure notification manager."""
         from nexus.notifications.manager import NotificationManager
         from nexus.notifications.ntfy import NtfyConfig as NtfyClientConfig
-        
+
         manager = NotificationManager()
-        
+
         # Configure Ntfy if enabled
         ntfy_cfg = self._config.notifications.ntfy
         if ntfy_cfg.enabled:
@@ -83,7 +83,7 @@ class NexusAPI:
                 min_severity=ntfy_cfg.min_severity,
             ))
             logger.info(f"Ntfy notifications enabled: {ntfy_cfg.server_url}/{ntfy_cfg.topic}")
-        
+
         return manager
 
     @property
@@ -213,10 +213,15 @@ WebSocket endpoint available at `/ws` for real-time event streaming.
         app.state.api_key = self._api_key
 
         # Add CORS middleware
+        cors_origins = self._config.server.cors_origins
+        wildcard_origins = "*" in cors_origins
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=self._config.server.cors_origins,
-            allow_credentials=True,
+            allow_origins=cors_origins,
+            # SECURITY: never combine wildcard origins with credentials — that pairing is
+            # spec-invalid and unsafe. This API authenticates via the X-API-Key header
+            # (not cookies), so CORS "credentials" are not required for wildcard use.
+            allow_credentials=not wildcard_origins,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -224,10 +229,12 @@ WebSocket endpoint available at `/ws` for real-time event streaming.
         # Add exception handler
         @app.exception_handler(Exception)
         async def global_exception_handler(request: Request, exc: Exception):
-            logger.error(f"Unhandled error: {exc}")
+            # SECURITY: log the detail server-side, but do NOT leak internals/tracebacks
+            # to the client.
+            logger.exception("Unhandled error handling %s %s", request.method, request.url.path)
             return JSONResponse(
                 status_code=500,
-                content={"error": "Internal server error", "detail": str(exc)},
+                content={"error": "Internal server error"},
             )
 
         # Import and include routes

@@ -4,8 +4,8 @@ Pytest configuration and fixtures.
 
 import asyncio
 import tempfile
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
-from typing import AsyncGenerator, Generator
 
 import pytest
 import pytest_asyncio
@@ -92,7 +92,7 @@ def sample_message() -> Message:
 @pytest.fixture
 def sample_device() -> Device:
     """Create sample device."""
-    from nexus.domain.enums import DeviceType, DeviceStatus
+    from nexus.domain.enums import DeviceStatus, DeviceType
 
     return Device(
         id="momo-001",
