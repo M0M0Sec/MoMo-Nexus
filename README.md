@@ -5,7 +5,9 @@
   <img src="https://img.shields.io/badge/Channels-LoRa%20%7C%204G%20%7C%20WiFi%20%7C%20BLE-green?style=for-the-badge" alt="Channels">
   <img src="https://img.shields.io/badge/Status-Production%20Ready-brightgreen?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Version-1.0.0-blue?style=for-the-badge" alt="Version">
-  <img src="https://img.shields.io/badge/Tests-343%20Passing-success?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-384%20Passing-success?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/github/actions/workflow/status/M0M0Sec/MoMo-Nexus/ci.yml?style=for-the-badge&label=CI" alt="CI">
 </p>
 
 <h3 align="center">The Central Communication Hub for MoMo Ecosystem</h3>
@@ -350,6 +352,56 @@ Device                           Nexus
 
 ---
 
+## ⚡ Getting Started
+
+### Requirements
+
+- Python **3.11+**
+- Optional extras per feature: `lora` (Meshtastic), `ble` (Bleak), `api` (FastAPI + Uvicorn)
+
+### Installation
+
+```bash
+git clone https://github.com/M0M0Sec/MoMo-Nexus.git
+cd MoMo-Nexus
+
+python -m venv .venv && source .venv/bin/activate
+
+# Core only
+pip install -e .
+
+# With the REST/WebSocket API server
+pip install -e ".[api]"
+
+# Everything (LoRa + BLE + API)
+pip install -e ".[full]"
+```
+
+> On hardware-less machines the LoRa/BLE/cellular drivers fall back to mock channels,
+> so the hub, routing engine, and API run fully without any radios attached.
+
+### CLI
+
+The `nexus` command is installed with the package:
+
+| Command | Description |
+|---------|-------------|
+| `nexus run` | Start the hub (add `--api` to serve the REST/WebSocket API) |
+| `nexus status` | Show hub status |
+| `nexus config --show` | Show current config (`--generate` writes a default) |
+| `nexus devices` | List registered devices |
+| `nexus messages` | List recent messages |
+| `nexus test --channel mock` | Test channel connectivity |
+| `nexus --version` | Print version |
+
+```bash
+# Generate a config, then start with the API enabled
+nexus config --generate --output nexus.yml
+nexus run --config nexus.yml --api
+```
+
+---
+
 ## 🌐 Web Dashboard
 
 **Status:** ✅ Complete | **Tech Stack:** React 18 + TypeScript + Vite + Tailwind CSS
@@ -418,6 +470,27 @@ npm run build  # → dist/ (production)
 
 ---
 
+## 🧪 Testing & Development
+
+The backend ships with a full async test suite. Runs are gated in CI on every push and PR.
+
+```bash
+pip install -e ".[dev,api]"
+
+make test        # pytest
+make test-cov    # pytest with coverage
+make lint        # ruff check
+make format      # ruff format
+```
+
+- **384 passing**, **77 skipped** (hardware-dependent: real LoRa/BLE/cellular) — 461 tests total
+- **Lint:** `ruff` clean (hard gate in CI)
+- **Types:** `mypy --strict` (declared; migration in progress, non-blocking in CI)
+- **CI:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the Python backend (pytest + ruff)
+  and the dashboard TypeScript check on Ubuntu
+
+---
+
 ## 📚 Documentation
 
 | Document | Description |
@@ -427,6 +500,7 @@ npm run build  # → dist/ (production)
 | [docs/HARDWARE.md](docs/HARDWARE.md) | Hardware assembly |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment guide |
 | [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md) | Ecosystem integration |
+| [docs/REMEDIATION_PLAN.md](docs/REMEDIATION_PLAN.md) | Phased reliability & security hardening plan |
 
 ---
 
@@ -445,6 +519,7 @@ npm run build  # → dist/ (production)
 | 0.9.0 | Sync API (MoMo, GhostBridge, Mimic) | ✅ Complete |
 | 1.0.0 | Cloud API (Hashcat, Evilginx) | ✅ Complete |
 | 1.1.0 | Web Dashboard | ✅ Complete |
+| 1.1.1 | Reliability & Security Hardening (channel/swarm fixes, API hardening, CI) | ✅ Complete |
 | 1.2.0 | Mobile App | 📅 Planned |
 
 ---
@@ -456,7 +531,7 @@ Nexus is the central hub that connects all MoMo ecosystem devices.
 | Project | Description | Platform | Status |
 |---------|-------------|----------|--------|
 | **[MoMo](https://github.com/Momo-Master/MoMo)** | WiFi/BLE/SDR Audit Platform | Pi 5 | ✅ v1.5.2 |
-| **[MoMo-Nexus](https://github.com/Momo-Master/MoMo-Nexus)** | Central Communication Hub | Pi 4 | ✅ v1.0.0 |
+| **[MoMo-Nexus](https://github.com/M0M0Sec/MoMo-Nexus)** | Central Communication Hub | Pi 4 | ✅ v1.0.0 |
 | **[MoMo-GhostBridge](https://github.com/Momo-Master/Momo-GhostBridge)** | Network Implant | NanoPi R2S | ✅ v0.5.0 |
 | **[MoMo-Mimic](https://github.com/Momo-Master/MoMo-Mimic)** | USB Attack Platform | Pi Zero 2W | ✅ v1.0.0 |
 
@@ -475,7 +550,7 @@ MoMo-Nexus is designed for authorized security testing and research only. Ensure
 
 <p align="center">
   <a href="https://github.com/Momo-Master/MoMo">MoMo</a> •
-  <a href="https://github.com/Momo-Master/MoMo-Nexus">Nexus</a> •
+  <a href="https://github.com/M0M0Sec/MoMo-Nexus">Nexus</a> •
   <a href="https://github.com/Momo-Master/Momo-GhostBridge">GhostBridge</a> •
   <a href="https://github.com/Momo-Master/MoMo-Mimic">Mimic</a>
 </p>
